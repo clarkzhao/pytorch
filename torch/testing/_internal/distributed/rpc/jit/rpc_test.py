@@ -58,6 +58,17 @@ class MyScriptModule(torch.jit.ScriptModule):
         return self.a
 
 
+def create_local_rref():
+    script_mod = MyScriptModule()
+    return rpc.RRef(script_mod)
+
+
+@torch.jit.script
+def rref_myscriptmodule_forward(rref_module):
+    # type: (RRef[MyModuleInterface]) -> Tensor
+    return rref_module.to_here().forward()
+
+
 @unittest.skipIf(
     not torch._six.PY3, "Pytorch distributed rpc package does not support python2"
 )
@@ -249,3 +260,19 @@ class JitRpcTest(RpcAgentTestFixture):
 
         res = rref_script_annotation(rref_var)
         self.assertEqual(res, torch.ones(2, 2) + 1)
+
+    @dist_init
+    def test_local_rref_with_script_module(self):
+        n = self.rank + 1
+        dst_rank = n % self.world_size
+
+        # create a local RRef on dst_rank that holds a ScriptModule
+        rref_module_sync = rpc.rpc_sync("worker{}".format(dst_rank), create_local_rref, args=())
+
+        # pass the dst_rank local created RRef module to jit function
+        # this ensures that the RRef created in the dst_rank worker
+        # is holding a valid IValue with ScriptModule type instead of
+        # a blind PyObjectType
+        res = rref_myscriptmodule_forward(rref_module_sync)
+
+        self.assertEqual(res, MyScriptModule().forward())
