@@ -96,25 +96,63 @@ bool TensorImpl::compute_contiguous() const {
   return is_contiguous;
 }
 
-bool TensorImpl::compute_channels_last_contiguous() const {
-  if (sizes_.size() == 4) {
-    int64_t expected = 1;
-    for (auto& d : {1, 3, 2, 0}) {
-      if (sizes_[d] != 1) {
-        if (strides_[d] == expected) {
-          expected *= sizes_[d];
-        } else {
-          return false;
+bool TensorImpl::compute_channels_last_contiguous(MemoryFormat memory_format) const {
+  // Please don't combine these code, constant array is used here to let
+  // compiler fully unroll the loop to get better performance
+  switch (memory_format) {
+    case MemoryFormat::ChannelsLast:
+      {
+        switch (sizes_.size()) {
+          case 4:
+            {
+              int64_t expected = 1;
+              for (auto& d : {1, 3, 2, 0}) {
+                if (sizes_[d] != 1) {
+                  if (strides_[d] != expected) {
+                    return false;
+                  }
+                  expected *= sizes_[d];
+                  }
+                }
+              return true;
+            }
+          case 3:
+            // TODO dim == 3 case will be enabled once it is fully tested
+            return false;
+          default:
+            return false;
         }
       }
-    }
-    return true;
+    case MemoryFormat::ChannelsLast3d:
+      {
+        switch (sizes_.size()) {
+          case 5:
+            {
+              int64_t expected = 1;
+              for (auto& d : {1, 4, 3, 2, 0}) {
+                if (sizes_[d] != 1) {
+                  if (strides_[d] != expected) {
+                    return false;
+                  }
+                  expected *= sizes_[d];
+                }
+              }
+              return true;
+            }
+          case 4:
+            // TODO dim == 4 case will be enabled once it is fully tested
+            return false;
+          default:
+            return false;
+        }
+      }
+    default:
+      return false;
   }
-  return false;
 }
 
-bool TensorImpl::compute_strides_like_channels_last() const {
-  return is_channels_last_strides(sizes_, strides_);
+bool TensorImpl::compute_strides_like_channels_last(MemoryFormat memory_format) const {
+  return is_channels_last_strides(sizes_, strides_, memory_format);
 }
 
 bool TensorImpl::compute_non_overlapping_and_dense() const {
@@ -179,6 +217,9 @@ bool TensorImpl::is_contiguous(at::MemoryFormat memory_format) const {
 #endif
   if (memory_format == at::MemoryFormat::ChannelsLast) {
       return is_channels_last_contiguous_;
+  }
+  else if (memory_format == at::MemoryFormat::ChannelsLast3d) {
+      return is_channels_last_3d_contiguous_;
   }
   return is_contiguous_;
 }
@@ -250,7 +291,9 @@ void TensorImpl::copy_tensor_metadata(
   dest_impl->key_set_ = src_impl->key_set_;
   dest_impl->is_contiguous_ = src_impl->is_contiguous_;
   dest_impl->is_channels_last_contiguous_ = src_impl->is_channels_last_contiguous_;
+  dest_impl->is_channels_last_3d_contiguous_ = src_impl->is_channels_last_3d_contiguous_;
   dest_impl->is_channels_last_ = src_impl->is_channels_last_;
+  dest_impl->is_channels_last_3d_ = src_impl->is_channels_last_3d_;
   dest_impl->is_non_overlapping_and_dense_ = src_impl->is_non_overlapping_and_dense_;
   dest_impl->is_wrapped_number_ = src_impl->is_wrapped_number_;
   dest_impl->reserved_ = src_impl->reserved_;
